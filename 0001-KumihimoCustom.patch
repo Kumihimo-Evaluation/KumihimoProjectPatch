@@ -1,0 +1,452 @@
+From daf676a630454499866098075a2efc886176fe90 Mon Sep 17 00:00:00 2001
+From: hayashi <hayashi@nds-osk.co.jp>
+Date: Tue, 13 Dec 2022 18:14:54 +0900
+Subject: [PATCH] KumihimoCustom
+
+---
+ Device/BLE/platform/adc/r_ble_adc.c |  18 +++--
+ Device/Config/r_ble_cfg.h           |  11 ++-
+ Device/Config/r_core_cfg.h          |   6 +-
+ Device/Driver/Include/r_ble_api.h   |   2 +-
+ qe_gen/ble/app_main.c               |  54 +++++++++-----
+ qe_gen/ble/gatt_db.c                |  15 ++--
+ qe_gen/ble/gatt_db.h                | 110 ++++++++++++++--------------
+ 7 files changed, 124 insertions(+), 92 deletions(-)
+
+diff --git a/Device/BLE/platform/adc/r_ble_adc.c b/Device/BLE/platform/adc/r_ble_adc.c
+index 293a1d7..9db5135 100644
+--- a/Device/BLE/platform/adc/r_ble_adc.c
++++ b/Device/BLE/platform/adc/r_ble_adc.c
+@@ -27,15 +27,17 @@
+ 
+ /* Config Macros */
+ #define ADC_CFG_AGT_CHANNEL         (0U)        /* 0:AGT0, 1:AGT1 */
+-#define ADC_CFG_AD_INTERVAL         (10000U)    /* Value for ADC interval (unit: usec) */
++#define ADC_CFG_AD_INTERVAL         (20000U)    /* Value for ADC interval (unit: usec) */
+ #define ADC_CFG_AD_BUSY_TH          (500U)      /* Value for ADC busy threshold (unit: usec) */
+ 
+ #define ADC_CFG_AD_CHANNEL          (ADC_MSEL_AN00) 
+                                                 /* Note: Set the AD channel pin to be used in the R_S14AD_Pinset() function. */
+ 
+-#define ADC_CFG_SAMPLETIME          (0x10U)     /* Value for S14ADC sampling time: range 5 to 255 */
++#define ADC_CFG_SAMPLETIME          (0x20U)     /* Value for S14ADC sampling time: range 5 to 255 */
+ 
+-#define ADC_CFG_TRANS_COUNT         (10U)       /* Value for ADC transfer count */
++#define ADC_CFG_TRANS_COUNT         (20U)       /* Value for ADC transfer count */
++
++#define ADC_CFG_CHANNEL_NUM         (1)
+ 
+ #define ADC_CFG_BUFF_NUMS           (1U<<0U)    /* Number of buffers : 2^n (Note: */
+ 
+@@ -103,11 +105,11 @@
+ 
+ /* Variables */
+ #if defined(ADC_CFG_BUFF_NUMS) && (ADC_CFG_BUFF_NUMS > 1)
+-uint16_t g_adc_read_data[ADC_CFG_BUFF_NUMS][ADC_CFG_TRANS_COUNT];
++uint16_t g_adc_read_data[ADC_CFG_BUFF_NUMS][ADC_CFG_TRANS_COUNT * ADC_CFG_CHANNEL_NUM];
+ uint32_t g_adc_count;
+ #else /* defined(ADC_CFG_BUFF_NUMS) && (ADC_CFG_BUFF_NUMS > 1) */
+-static uint16_t g_adc_read_data[ADC_CFG_TRANS_COUNT];
+-static uint16_t g_adc_copy_data[ADC_CFG_TRANS_COUNT];
++static uint16_t g_adc_read_data[ADC_CFG_TRANS_COUNT * ADC_CFG_CHANNEL_NUM];
++static uint16_t g_adc_copy_data[ADC_CFG_TRANS_COUNT * ADC_CFG_CHANNEL_NUM];
+ #endif /* defined(ADC_CFG_BUFF_NUMS) && (ADC_CFG_BUFF_NUMS > 1) */
+ static ble_adc_cb_t g_adc_cb;
+ /* S14AD driver instance */
+@@ -152,13 +154,13 @@ static void adc_event_cb(void)
+         /* interrupt restore */
+         ADC_EXIT_CRITICAL();
+         /* callback to application layer*/
+-        g_adc_cb(data_ptr, ADC_CFG_TRANS_COUNT);
++        g_adc_cb(data_ptr, ADC_CFG_TRANS_COUNT * ADC_CFG_CHANNEL_NUM);
+     }
+ #else /* defined(ADC_CFG_BUFF_NUMS) && (ADC_CFG_BUFF_NUMS > 1) */
+     if( g_adc_cb )
+     {
+         /* callback to application layer*/
+-        g_adc_cb(&g_adc_copy_data[0], ADC_CFG_TRANS_COUNT);
++        g_adc_cb(&g_adc_copy_data[0], ADC_CFG_TRANS_COUNT * ADC_CFG_CHANNEL_NUM);
+     }
+ #endif /* defined(ADC_CFG_BUFF_NUMS) && (ADC_CFG_BUFF_NUMS > 1) */
+ }
+diff --git a/Device/Config/r_ble_cfg.h b/Device/Config/r_ble_cfg.h
+index 9380c18..f97fd1e 100644
+--- a/Device/Config/r_ble_cfg.h
++++ b/Device/Config/r_ble_cfg.h
+@@ -68,7 +68,7 @@ Configuration Options
+  * @note   The BD address setting format is little endian. \n
+  *         If the address is "AA:BB:CC:DD:EE:FF", set the byte array in the order {0xFF, 0xEE, 0xDD, 0xCC, 0xBB, 0xAA}.
+  */
+-#define BLE_CFG_RF_DBG_PUB_ADDR         {0xFF,0xFF,0xFF,0x50,0x90,0x74}
++#define BLE_CFG_RF_DBG_PUB_ADDR         {0xA5,0x5A,0xA5,0x50,0x90,0x74}
+ 
+ /** 
+  * @def BLE_CFG_RF_DBG_RAND_ADDR
+@@ -91,7 +91,7 @@ Configuration Options
+  * @details     range: 1 to 7 \n
+  *              default : 2
+  */
+-#define BLE_CFG_RF_CONN_MAX             (2)
++#define BLE_CFG_RF_CONN_MAX             (1)
+ 
+ /** 
+  * @def BLE_CFG_RF_CONN_DATA_MAX
+@@ -252,7 +252,7 @@ Configuration Options
+  *              1: max +4dBm \n
+  *              default : 0
+  */
+-#define BLE_CFG_RF_MAX_TX_POW           (0)
++#define BLE_CFG_RF_MAX_TX_POW           (1)
+ 
+ /** 
+  * @def BLE_CFG_RF_DEF_TX_POW
+@@ -364,7 +364,7 @@ Configuration Options
+  *              1: Enable \n
+  *              default : 1
+  */
+-#define BLE_CFG_BOARD_LED_SW_EN         (1)
++#define BLE_CFG_BOARD_LED_SW_EN         (0)
+ 
+ /** 
+  * @def BLE_CFG_LOG_LEVEL
+@@ -375,7 +375,7 @@ Configuration Options
+  *              3 : Error & Warning & Debug \n
+  *              default : 3
+  */
+-#define BLE_CFG_LOG_LEVEL               (3)
++#define BLE_CFG_LOG_LEVEL               (0)
+ 
+ /** 
+  * @def BLE_CFG_ABS_API_EN
+@@ -461,7 +461,6 @@ Configuration Options for SoTB
+  */
+ #define BLE_CFG_MCU_VBB_SSTBY           (1)
+ 
+-
+ #endif /* R_BLE_CFG_H */
+ 
+ /** @} */
+diff --git a/Device/Config/r_core_cfg.h b/Device/Config/r_core_cfg.h
+index 3e4a1ce..827e41a 100644
+--- a/Device/Config/r_core_cfg.h
++++ b/Device/Config/r_core_cfg.h
+@@ -298,7 +298,11 @@
+  * @name OFS_SECURITR_MPU_REGISTER
+  **********************************************************************************************************************/
+ /* @{ */
+-#define SYSTEM_CFG_OFS0                     (0xFFFFFFFF)    /* OFS0 register          */
++//USE_IWDT
++#define SYSTEM_CFG_OFS0                     (0xFFFFFD59)    /* OFS0 register          */ //Enable IWDT interval 16sec
++//Don't USE IWDT
++//#define SYSTEM_CFG_OFS0                     (0xFFFFFFFF)    /* OFS0 register        */ // Disable IWDT
++
+ #define SYSTEM_CFG_OFS1                     (0xFFFFFFFF)    /* OFS1 register          */
+ #define SYSTEM_CFG_SECMPU_PC0_START         (0xFFFFFFFF)    /* SECMPU PC0 START       */
+ #define SYSTEM_CFG_SECMPU_PC0_END           (0xFFFFFFFF)    /* SECMPU PC0 END         */
+diff --git a/Device/Driver/Include/r_ble_api.h b/Device/Driver/Include/r_ble_api.h
+index 5835676..c40addd 100644
+--- a/Device/Driver/Include/r_ble_api.h
++++ b/Device/Driver/Include/r_ble_api.h
+@@ -1194,7 +1194,7 @@ typedef enum {
+  * @def BLE_GATT_DEFAULT_MTU
+  * @brief GATT Default MTU.
+  */
+-#define BLE_GATT_DEFAULT_MTU                                            (23)
++#define BLE_GATT_DEFAULT_MTU                                            (44+3)
+ 
+ /** 
+  * @def BLE_GATT_16_BIT_UUID_FORMAT
+diff --git a/qe_gen/ble/app_main.c b/qe_gen/ble/app_main.c
+index 124154f..cb27df2 100644
+--- a/qe_gen/ble/app_main.c
++++ b/qe_gen/ble/app_main.c
+@@ -39,7 +39,7 @@ Includes   <System Includes> , "Project Includes"
+ /******************************************************************************
+  Application config
+  ******************************************************************************/
+-#define USE_BD_ADDR_TYPE    (1)     /* 0: Use Public Address, 1: Use Static Random Address */
++#define USE_BD_ADDR_TYPE    (0)     /* 0: Use Public Address, 1: Use Static Random Address */
+ #define USE_ADV_INTERVAL    (160)   /* uint: msec  Note: It is rounded in units of 625usec(1slot). */
+ #define LSS_TARGET_LED      (BLE_BOARD_LED2)
+ #define UPD_CONN_ENABLE     (0)     /* Connection Update from Server 0:disable, 1:enable */
+@@ -88,7 +88,7 @@ static uint8_t gs_adv_data[] =
+     /* Complete Local Name */
+     11,
+     0x09,
+-    'R', 'B', 'L', 'E', '-', 'A', 'D', 'C', ' ', ' ', 
++    'K', 'U', 'M', 'I', 'H', 'I', 'M', 'O', '1', ' ', 
+     /* Incomplete List of 16-bit Service Class UUIDs */
+     3,
+     0x02,
+@@ -174,6 +174,7 @@ static void ble_host_stack_init(void)
+ }
+ #endif /* (BLE_CFG_CMD_LINE_EN) */
+ 
++
+ /******************************************************************************
+  * Function Name: ble_app_gapcb
+  * Description  : Internal function called by GAP API callback function.
+@@ -404,12 +405,18 @@ static void aras_cb(uint16_t type, ble_status_t result, st_ble_servs_evt_data_t
+     }
+ }
+ 
+-static uint8_t gs_sw_data_value[BLE_ARAS_ADC_DATA_LEN];
++static uint8_t gs_sw_data_value_r[BLE_ARAS_ADC_DATA_LEN];
++static uint8_t gs_sw_data_value_n[BLE_ARAS_ADC_DATA_LEN];
+ static uint32_t gs_notif_count;
+-static st_ble_seq_data_t gs_sw_value = {
++static st_ble_seq_data_t gs_sw_value_r = {
++            .len = BLE_ARAS_ADC_DATA_LEN,
++            .data = gs_sw_data_value_r
++    };
++static st_ble_seq_data_t gs_sw_value_n = {
+             .len = BLE_ARAS_ADC_DATA_LEN,
+-            .data = gs_sw_data_value
++            .data = gs_sw_data_value_n
+     };
++
+ static void app_adc_cb(uint16_t *p_data_ptr, uint16_t data_count)
+ {
+     R_BLE_BOARD_ToggleLEDState(LSS_TARGET_LED);
+@@ -418,18 +425,25 @@ static void app_adc_cb(uint16_t *p_data_ptr, uint16_t data_count)
+     {
+         uint32_t ii;
+         
+-        memcpy(&gs_sw_data_value[0],  &gs_sw_data_value[10], 10);
+-        memcpy(&gs_sw_data_value[10], &gs_sw_data_value[20], 10);
+-        
+-        for (ii = 0; (ii < 10) && (ii < data_count); ii++ )
++        memcpy(&gs_sw_data_value_r[0],  &gs_sw_data_value_r[20], 20);			// 前回　計測値 20個分
++        for (ii = 0; (ii < 20) && (ii < data_count); ii++ )
+         {
+-            gs_sw_data_value[ii+20] = (uint8_t)((p_data_ptr[ii]>>6)&0xFF);
++            gs_sw_data_value_r[ii+20] = (uint8_t)((p_data_ptr[ii]>>6)&0xFF);	// 今回計測値   20個分  14bit⇒8bit(下位6bit落とす
+         }
+-        gs_sw_data_value[BLE_ARAS_ADC_DATA_LEN-1] = (uint8_t)(gs_notif_count);
+-        gs_notif_count++;
+-        
+-        R_BLE_ARAS_SetAdcData(&gs_sw_value);
+-        R_BLE_ARAS_NotifyAdcData(gs_conn_hdl, &gs_sw_value);
++
++        /* Read用 */
++        gs_sw_data_value_r[BLE_ARAS_ADC_DATA_LEN - 4] = (uint8_t)((gs_notif_count >> 24) & 0xFF);	// 最上位バイト設定
++        gs_sw_data_value_r[BLE_ARAS_ADC_DATA_LEN - 3] = (uint8_t)((gs_notif_count >> 16) & 0xFF);	// 
++        gs_sw_data_value_r[BLE_ARAS_ADC_DATA_LEN - 2] = (uint8_t)((gs_notif_count >>  8) & 0xFF);	// 
++        gs_sw_data_value_r[BLE_ARAS_ADC_DATA_LEN - 1] = (uint8_t)( gs_notif_count        & 0xFF);	// 最下位バイト設定
++        /* Notify用 */
++        gs_sw_data_value_n[ 0]                        = (uint8_t)((gs_notif_count >> 24) & 0xFF);	// 最上位バイト設定
++        gs_sw_data_value_n[ 1]                        = (uint8_t)((gs_notif_count >> 16) & 0xFF);	// 
++        gs_sw_data_value_n[ 2]                        = (uint8_t)((gs_notif_count >>  8) & 0xFF);	// 
++        gs_sw_data_value_n[ 3]                        = (uint8_t)( gs_notif_count        & 0xFF);	// 最下位バイト設定
++        gs_notif_count = gs_notif_count + 20;
++        R_BLE_ARAS_SetAdcData(&gs_sw_value_r);
++        R_BLE_ARAS_NotifyAdcData(gs_conn_hdl, &gs_sw_value_n);
+     }
+ }
+ 
+@@ -449,7 +463,10 @@ static ble_status_t ble_app_init(void)
+     gs_conn_hdl  = BLE_GAP_INVALID_CONN_HDL;
+ #if (BLE_CFG_AUTO_READ_ADC_EN)
+     gs_notif_count = 0;
+-    memset(gs_sw_data_value,0x00,BLE_ARAS_ADC_DATA_LEN);
++
++    memset(gs_sw_data_value_r,0x00,BLE_ARAS_ADC_DATA_LEN);
++    memset(gs_sw_data_value_n,0x00,BLE_ARAS_ADC_DATA_LEN);
++
+ #endif /* (BLE_CFG_AUTO_READ_ADC_EN) */
+ 
+     /* Initialize host stack */
+@@ -539,6 +556,10 @@ void app_main(void)
+ 
+         /* Process BLE Event */
+         R_BLE_Execute();
++
++        //Reflesh IWDT
++        IWDT->IWDTRR = 0x00;
++        IWDT->IWDTRR = 0xFF;
+         
+ #if (BLE_CFG_MCU_LPC_EN)
+         /* Enter the MCU Lower Power Mode */
+@@ -546,4 +567,3 @@ void app_main(void)
+ #endif /* (BLE_CFG_MCU_LPC_EN) */
+     }
+ }
+-
+diff --git a/qe_gen/ble/gatt_db.c b/qe_gen/ble/gatt_db.c
+index 9160f18..9436424 100644
+--- a/qe_gen/ble/gatt_db.c
++++ b/qe_gen/ble/gatt_db.c
+@@ -90,8 +90,8 @@ static const uint8_t gs_gatt_const_uuid_arr[] =
+ 
+ static uint8_t gs_gatt_value_arr[] =
+ {
+-    /* Device Name */
+-    'R', 'B', 'L', 'E', '-', 'A', 'D', 'C', ' ', ' ', 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
++// 0/* Device Name */
++    'K', 'U', 'M', 'I', 'H', 'I', 'M', 'O', '1', ' ', 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+ 
+     /* Appearance */
+     0, 0,
+@@ -106,7 +106,12 @@ static uint8_t gs_gatt_value_arr[] =
+     0,
+ 
+     /* ADC Data */
+-    0, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
++//     1     2     3     4     5     6     7     8     9    10    11    12    13    14    15    16    17    18    19    20
++    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 
++//    21    22    23    24    25    26    27    28    29    30    31    32    33    34    35    36    37    38    39    40
++    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 
++//    41    42    43    44 
++    0x00, 0x00, 0x00, 0x00,
+ 
+     /* ADC reserved */
+     0,
+@@ -629,7 +634,7 @@ static const st_ble_gatts_db_attr_cfg_t gs_gatt_db_attr_table[] =
+         /* Auxiliary Properties */
+         BLE_GATT_DB_FIXED_LENGTH_PROPERTY,
+         /* Value Size */
+-        31,
++        31+13,
+         /* Next Attribute Type Index */
+         0x0000,
+         /* UUID Offset */
+@@ -686,7 +691,7 @@ static const st_ble_gatts_db_attr_cfg_t gs_gatt_db_attr_table[] =
+         /* UUID Offset */
+         30,
+         /* Value */
+-        (uint8_t *)(gs_gatt_value_arr + 63),
++        (uint8_t *)(gs_gatt_value_arr + 63+13),
+     },
+ 
+ };
+diff --git a/qe_gen/ble/gatt_db.h b/qe_gen/ble/gatt_db.h
+index 2608f4d..9967609 100644
+--- a/qe_gen/ble/gatt_db.h
++++ b/qe_gen/ble/gatt_db.h
+@@ -14,67 +14,69 @@
+ * following link:
+ * http://www.renesas.com/disclaimer
+ *
+-* Copyright (C) 2019 Renesas Electronics Corporation. All rights reserved.
++* Copyright (C) 2019 Renesas Electronics Corporation. All rights reserved.
+ ***********************************************************************************************************************/
+ 
+-/*******************************************************************************
+-* File Name    : gatt_db.h
+-* Description  : This is a simple GATT Database sample for BLE.
+-*******************************************************************************/
+-/*******************************************************************************
+-* History : DD.MM.YYYY Version  Description
+-*           25.06.2019 1.00     First Release.
+-*******************************************************************************/
++/*******************************************************************************
++* File Name    : gatt_db.h
++* Description  : This is a simple GATT Database sample for BLE.
++*******************************************************************************/
++/*******************************************************************************
++* History : DD.MM.YYYY Version  Description
++*           25.06.2019 1.00     First Release.
++*******************************************************************************/
+ 
+-#ifndef GATT_DB_H
+-#define GATT_DB_H
+-
+-/*****************************************************************************
+-Private global variables and functions
+-******************************************************************************/
++#ifndef GATT_DB_H
++#define GATT_DB_H
++
++/*****************************************************************************
++Private global variables and functions
++******************************************************************************/
+ extern st_ble_gatts_db_cfg_t g_gatt_db_table;
+ 
+-/***********************************************************************************************************************
+-Typedef definitions
+-***********************************************************************************************************************/
++/***********************************************************************************************************************
++Typedef definitions
++***********************************************************************************************************************/
+ typedef enum
+ {
+-    BLE_INVALID_ATTR_HDL = 0x0000,
+-    BLE_GAPS_DECL_HDL = 0x0001,
+-    BLE_GAPS_DEV_NAME_DECL_HDL = 0x0002,
+-    BLE_GAPS_DEV_NAME_VAL_HDL = 0x0003,
+-    BLE_GAPS_APPEARANCE_DECL_HDL = 0x0004,
+-    BLE_GAPS_APPEARANCE_VAL_HDL = 0x0005,
+-    BLE_GAPS_PER_PREF_CONN_PARAM_DECL_HDL = 0x0006,
+-    BLE_GAPS_PER_PREF_CONN_PARAM_VAL_HDL = 0x0007,
+-    BLE_GAPS_CENT_ADDR_RSLV_DECL_HDL = 0x0008,
+-    BLE_GAPS_CENT_ADDR_RSLV_VAL_HDL = 0x0009,
+-    BLE_GAPS_RSLV_PRIV_ADDR_ONLY_DECL_HDL = 0x000A,
+-    BLE_GAPS_RSLV_PRIV_ADDR_ONLY_VAL_HDL = 0x000B,
+-    BLE_GATS_DECL_HDL = 0x000C,
+-    BLE_GATS_SERV_CHGED_DECL_HDL = 0x000D,
+-    BLE_GATS_SERV_CHGED_VAL_HDL = 0x000E,
+-    BLE_GATS_SERV_CHGED_CLI_CNFG_DESC_HDL = 0x000F,
+-    BLE_ARAS_DECL_HDL = 0x0010,
+-    BLE_ARAS_ADC_DATA_DECL_HDL = 0x0011,
+-    BLE_ARAS_ADC_DATA_VAL_HDL = 0x0012,
+-    BLE_ARAS_ADC_DATA_CLI_CNFG_DESC_HDL = 0x0013,
+-    BLE_ARAS_ADC_RESERVED_DECL_HDL = 0x0014,
+-    BLE_ARAS_ADC_RESERVED_VAL_HDL = 0x0015,
++    BLE_INVALID_ATTR_HDL = 0x0000,
++    BLE_GAPS_DECL_HDL = 0x0001,
++    BLE_GAPS_DEV_NAME_DECL_HDL = 0x0002,
++    BLE_GAPS_DEV_NAME_VAL_HDL = 0x0003,
++    BLE_GAPS_APPEARANCE_DECL_HDL = 0x0004,
++    BLE_GAPS_APPEARANCE_VAL_HDL = 0x0005,
++    BLE_GAPS_PER_PREF_CONN_PARAM_DECL_HDL = 0x0006,
++    BLE_GAPS_PER_PREF_CONN_PARAM_VAL_HDL = 0x0007,
++    BLE_GAPS_CENT_ADDR_RSLV_DECL_HDL = 0x0008,
++    BLE_GAPS_CENT_ADDR_RSLV_VAL_HDL = 0x0009,
++    BLE_GAPS_RSLV_PRIV_ADDR_ONLY_DECL_HDL = 0x000A,
++    BLE_GAPS_RSLV_PRIV_ADDR_ONLY_VAL_HDL = 0x000B,
++    BLE_GATS_DECL_HDL = 0x000C,
++    BLE_GATS_SERV_CHGED_DECL_HDL = 0x000D,
++    BLE_GATS_SERV_CHGED_VAL_HDL = 0x000E,
++    BLE_GATS_SERV_CHGED_CLI_CNFG_DESC_HDL = 0x000F,
++    BLE_ARAS_DECL_HDL = 0x0010,
++    BLE_ARAS_ADC_DATA_DECL_HDL = 0x0011,
++    BLE_ARAS_ADC_DATA_VAL_HDL = 0x0012,
++    BLE_ARAS_ADC_DATA_CLI_CNFG_DESC_HDL = 0x0013,
++    BLE_ARAS_ADC_RESERVED_DECL_HDL = 0x0014,
++    BLE_ARAS_ADC_RESERVED_VAL_HDL = 0x0015,
+ } e_ble_attr_hdl_t;
+ 
+-/***********************************************************************************************************************
+-Macro definitions
+-***********************************************************************************************************************/
+-#define BLE_GAPS_DEV_NAME_LEN (20)
+-#define BLE_GAPS_APPEARANCE_LEN (2)
+-#define BLE_GAPS_PER_PREF_CONN_PARAM_LEN (8)
+-#define BLE_GAPS_CENT_ADDR_RSLV_LEN (1)
+-#define BLE_GAPS_RSLV_PRIV_ADDR_ONLY_LEN (1)
+-#define BLE_GATS_SERV_CHGED_LEN (4)
+-#define BLE_GATS_SERV_CHGED_CLI_CNFG_LEN (2)
+-#define BLE_ARAS_ADC_DATA_LEN (31)
+-#define BLE_ARAS_ADC_DATA_CLI_CNFG_LEN (2)
+-#define BLE_ARAS_ADC_RESERVED_LEN (1)
++/***********************************************************************************************************************
++Macro definitions
++***********************************************************************************************************************/
++#define BLE_GAPS_DEV_NAME_LEN (20)
++#define BLE_GAPS_APPEARANCE_LEN (2)
++#define BLE_GAPS_PER_PREF_CONN_PARAM_LEN (8)
++#define BLE_GAPS_CENT_ADDR_RSLV_LEN (1)
++#define BLE_GAPS_RSLV_PRIV_ADDR_ONLY_LEN (1)
++#define BLE_GATS_SERV_CHGED_LEN (4)
++#define BLE_GATS_SERV_CHGED_CLI_CNFG_LEN (2)
++
++#define BLE_ARAS_ADC_DATA_LEN (31+13)
++
++#define BLE_ARAS_ADC_DATA_CLI_CNFG_LEN (2)
++#define BLE_ARAS_ADC_RESERVED_LEN (1)
+ 
+-#endif /* GATT_DB_H */
++#endif /* GATT_DB_H */
+-- 
+2.31.1.windows.1
+
